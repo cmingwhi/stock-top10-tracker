@@ -1,10 +1,10 @@
 name: 📊 每日台股成交量爬蟲
 
 on:
-  # 定時觸發：每天台灣時間下午 6 點 (UTC+8)
+  # 定時觸發：每天台灣時間下午 6 點 (UTC 10:00)
   schedule:
-    - cron: '0 10 * * *'  # UTC 10:00 = 台灣 18:00
-    
+    - cron: '0 10 * * *'
+  
   # 手動觸發：可以從 GitHub Actions 頁面手動執行
   workflow_dispatch:
   
@@ -14,26 +14,32 @@ on:
     paths:
       - 'crawler/**'
       - 'requirements.txt'
+      - 'frontend/**'
+
+# 設定權限，允許部署到 GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 避免同時執行多個部署
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   crawl-and-deploy:
     name: 爬取成交量排行並部署
     runs-on: ubuntu-latest
     
-    # 設定權限，允許部署到 GitHub Pages
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
-    
     steps:
       # 1. 檢出程式碼
       - name: 📥 Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
       
       # 2. 設定 Python 環境
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
@@ -45,36 +51,53 @@ jobs:
           
       # 4. 執行爬蟲程式
       - name: 🕷️ Run crawler
+        id: crawler
         run: |
           cd crawler
           python daily_volume_crawler.py once
-        env:
-          # 可以設定環境變數（如果需要通知等功能）
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      # 5. 複製資料到前端目錄
-      - name: 📂 Copy data to frontend
+        continue-on-error: true  # 即使爬蟲失敗也繼續部署（可能非交易時段）
+        
+      # 5. 準備部署檔案（複製到 frontend 目錄）
+      - name: 📂 Prepare deployment files
         run: |
-          mkdir -p frontend/data
-          cp crawler/data/latest.json frontend/data/ 2>/dev/null || echo "No data yet"
-          cp crawler/data/history/*.json frontend/data/history/ 2>/dev/null || mkdir -p frontend/data/history
+          # 確保目錄結構正確
+          mkdir -p frontend/data/history
           
-      # 6. 部署到 GitHub Pages
-      - name: 🚀 Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+          # 複製爬蟲產生的資料（如果存在的話）
+          if [ -f crawler/data/latest.json ]; then
+            cp crawler/data/latest.json frontend/data/
+            echo "✅ 已複製 latest.json"
+            cat frontend/data/latest.json | head -5
+          else
+            echo "⚠️ 未找到 latest.json，建立範例資料"
+            # 建立一個範例 JSON，避免頁面完全空白
+            echo '{"date":"20260505","update_time":"2026-05-05T10:00:00","top10":[],"message":"今日無交易資料或爬蟲尚未執行"}' > frontend/data/latest.json
+          fi
+          
+          # 複製歷史資料（如果有的話）
+          if [ -d crawler/data/history ]; then
+            cp -r crawler/data/history/* frontend/data/history/ 2>/dev/null || true
+            echo "✅ 已複製歷史資料，共 $(ls crawler/data/history/ | wc -l) 筆"
+          fi
+          
+          # 確認入口檔案存在
+          if [ ! -f frontend/index.html ]; then
+            echo "❌ 錯誤：找不到 frontend/index.html"
+            exit 1
+          fi
+          
+          # 顯示部署目錄結構（除錯用）
+          echo "📁 部署目錄結構："
+          ls -la frontend/
+          echo "📁 data 目錄："
+          ls -la frontend/data/ 2>/dev/null || echo "data 目錄為空"
+          
+      # 6. 上傳 Pages artifact（GitHub 官方方式）
+      - name: 📤 Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./frontend
-          publish_branch: gh-pages
-          destination_dir: ./
-          keep_files: false
-          user_name: 'github-actions[bot]'
-          user_email: 'github-actions[bot]@users.noreply.github.com'
-          commit_message: '自動更新：${{ github.run_id }}'
+          path: ./frontend
           
-      # 7. 可選：發送通知到 Discord / Telegram / Slack
-      - name: 💬 Send notification (optional)
-        if: always()
-        run: |
-          echo "✅ Workflow completed at $(date)"
-          # 在這裡可以加入 webhook 通知
+      # 7. 部署到 GitHub Pages（GitHub 官方方式）
+      - name: 🚀 Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
