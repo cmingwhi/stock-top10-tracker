@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📊 台股成交量TOP10｜昨日 vs 今日 即時對比</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: system-ui, 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+            background: linear-gradient(135deg, #0b1420 0%, #121d2a 100%);
+            min-height: 100vh;
+            padding: 1.5rem;
+            color: #eef2ff;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        .header { text-align: center; margin-bottom: 2rem; }
+        
+        .header h1 {
+            font-size: 1.9rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #FBBF24, #F59E0B);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .header p { color: #8ba0bc; font-size: 0.85rem; margin-top: 0.4rem; }
+        
+        .control-bar {
+            background: rgba(15, 25, 35, 0.65);
+            backdrop-filter: blur(10px);
+            border-radius: 40px;
+            padding: 0.8rem 1.8rem;
+            margin-bottom: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        
+        .date-info { font-size: 0.9rem; color: #cbd5e6; }
+        
+        .refresh-btn {
+            background: #FBBF24;
+            border: none;
+            font-weight: 700;
+            padding: 0.55rem 1.5rem;
+            border-radius: 40px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: #0f172a;
+            transition: 0.2s;
+        }
+        
+        .refresh-btn:hover { background: #f7af1a; transform: scale(1.02); }
+        
+        .compare-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+        
+        .card {
+            background: rgba(12, 22, 32, 0.7);
+            backdrop-filter: blur(6px);
+            border-radius: 28px;
+            border: 1px solid rgba(203, 213, 225, 0.12);
+            overflow: hidden;
+        }
+        
+        .card-header {
+            padding: 1.2rem 1.5rem;
+            border-bottom: 1px solid rgba(251, 191, 36, 0.25);
+            background: rgba(0, 0, 0, 0.25);
+        }
+        
+        .card-header h2 { font-size: 1.3rem; display: flex; align-items: center; gap: 0.5rem; }
+        
+        .badge-date {
+            background: #0f212f;
+            font-size: 0.75rem;
+            font-weight: normal;
+            padding: 0.2rem 0.8rem;
+            border-radius: 40px;
+            color: #FBBF24;
+        }
+        
+        .table-wrapper { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+        
+        .stock-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        
+        .stock-table th {
+            text-align: left;
+            padding: 0.9rem 0.8rem;
+            background: rgba(30, 41, 59, 0.5);
+            color: #FBBF24;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+        
+        .stock-table td { padding: 0.85rem 0.8rem; border-bottom: 1px solid rgba(100, 116, 139, 0.25); }
+        
+        .rank-num {
+            display: inline-flex;
+            width: 28px;
+            height: 28px;
+            background: rgba(251, 191, 36, 0.15);
+            border-radius: 30px;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+        }
+        
+        .rank-1 { background: #FBBF24; color: #0f172a; }
+        
+        .update-time { font-size: 0.7rem; color: #6b8cae; margin-top: 0.5rem; text-align: right; }
+        
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 0.7rem;
+            color: #5f7a9a;
+            border-top: 1px solid rgba(203, 213, 225, 0.1);
+            padding-top: 1.5rem;
+        }
+        
+        @media (max-width: 780px) { .compare-grid { grid-template-columns: 1fr; gap: 1rem; } }
+        
+        .loading { text-align: center; padding: 2rem; color: #94a3b8; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>📈 台股成交量王者對決｜昨日 vs 今日 TOP10</h1>
+        <p>🤖 每日自動更新 | 左側為前一交易日真實排行 | 右側為證交所即時排行</p>
+    </div>
+
+    <div class="control-bar">
+        <div class="date-info" id="dateInfo">📅 載入中...</div>
+        <button class="refresh-btn" id="syncBtn">🔄 重新整理</button>
+    </div>
+
+    <div class="compare-grid">
+        <div class="card">
+            <div class="card-header">
+                <h2>📆 前一交易日 <span class="badge-date" id="prevDate">--</span></h2>
+            </div>
+            <div class="table-wrapper">
+                <table class="stock-table">
+                    <thead><tr><th>#</th><th>代號</th><th>名稱</th><th>成交量(股)</th></tr></thead>
+                    <tbody id="prevTbody"><tr><td colspan="4" class="loading">讀取歷史資料中...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>🔥 最新交易日 <span class="badge-date" id="latestDate">--</span></h2>
+            </div>
+            <div class="table-wrapper">
+                <table class="stock-table">
+                    <thead><tr><th>#</th><th>代號</th><th>名稱</th><th>成交量(股)</th></tr></thead>
+                    <tbody id="latestTbody"><tr><td colspan="4" class="loading">載入即時排行...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="footer">
+        📌 資料來源：臺灣證券交易所 | 每日 18:00 自動更新歷史資料 | 即時排行每 30 秒更新
+    </div>
+</div>
+
+<script>
+    // 證交所即時 API
+    const TWSE_API = 'https://openapi.twse.com.tw/v1/stock/aftertrading/volumeRank';
+    // 歷史資料路徑 (由 GitHub Actions 產生的 JSON)
+    const HISTORY_API = 'data/latest.json';
+
+    function formatVolume(volume) {
+        if (volume >= 1_000_000_000) return (volume / 1_000_000_000).toFixed(2) + ' 億';
+        if (volume >= 10_000_000) return (volume / 10_000_000).toFixed(2) + ' 千萬';
+        if (volume >= 1_000_000) return (volume / 1_000_000).toFixed(2) + ' 百萬';
+        if (volume >= 1_000) return (volume / 1_000).toFixed(0) + ' 千';
+        return volume?.toLocaleString() + ' 股';
+    }
+
+    function renderTable(tbodyId, data, dateLabelId, dateStr, updateTime = null) {
+        const tbody = document.getElementById(tbodyId);
+        const dateSpan = document.getElementById(dateLabelId);
+        
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="loading">暫無資料</td></tr>';
+            if (dateSpan) dateSpan.innerText = dateStr || '--';
+            return;
+        }
+        
+        if (dateSpan && dateStr) dateSpan.innerText = dateStr;
+        
+        let html = '';
+        data.forEach(item => {
+            const volFmt = formatVolume(item.volume);
+            const rankClass = item.rank === 1 ? 'rank-1' : '';
+            html += `<tr>
+                        <td style="width:60px"><span class="rank-num ${rankClass}">${item.rank}</span></td>
+                        <td><strong>${item.code}</strong></td>
+                        <td>${item.name}</td>
+                        <td>${volFmt}</td>
+                     </tr>`;
+        });
+        tbody.innerHTML = html;
+        
+        if (updateTime) {
+            let updateSpan = document.getElementById(`${tbodyId}_update`);
+            if (!updateSpan) {
+                updateSpan = document.createElement('div');
+                updateSpan.className = 'update-time';
+                updateSpan.id = `${tbodyId}_update`;
+                document.querySelector(`#${tbodyId}`).closest('.card').querySelector('.card-header').appendChild(updateSpan);
+            }
+            updateSpan.innerHTML = `🕐 更新：${new Date(updateTime).toLocaleString()}`;
+        }
+    }
+
+    async function fetchRealTimeTop10() {
+        try {
+            const response = await fetch(TWSE_API);
+            const data = await response.json();
+            if (data && Array.isArray(data)) {
+                return data.slice(0, 10).map((item, idx) => ({
+                    rank: idx + 1,
+                    code: item.Code,
+                    name: item.Name,
+                    volume: parseInt(item.TradeVolume?.replace(/,/g, '') || '0')
+                }));
+            }
+            return [];
+        } catch (error) {
+            console.error('即時資料錯誤:', error);
+            return [];
+        }
+    }
+
+    async function fetchHistoricalTop10() {
+        try {
+            const response = await fetch(`${HISTORY_API}?t=${Date.now()}`);
+            if (!response.ok) throw new Error('歷史檔案不存在');
+            const json = await response.json();
+            return {
+                date: json.date,
+                top10: json.top10,
+                update_time: json.update_time
+            };
+        } catch (error) {
+            console.error('歷史資料錯誤:', error);
+            return { date: null, top10: null, update_time: null };
+        }
+    }
+
+    async function syncComparison() {
+        const dateInfo = document.getElementById('dateInfo');
+        dateInfo.innerHTML = '🔄 更新中...';
+        
+        const [historical, realtime] = await Promise.all([
+            fetchHistoricalTop10(),
+            fetchRealTimeTop10()
+        ]);
+        
+        // 顯示歷史資料
+        if (historical.top10 && historical.top10.length) {
+            renderTable('prevTbody', historical.top10, 'prevDate', historical.date, historical.update_time);
+        } else {
+            renderTable('prevTbody', [], 'prevDate', '無歷史資料');
+        }
+        
+        // 顯示即時資料
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+        renderTable('latestTbody', realtime, 'latestDate', todayStr);
+        
+        const prevDateStr = historical.date ? 
+            `${historical.date.slice(0,4)}/${parseInt(historical.date.slice(4,6))}/${parseInt(historical.date.slice(6,8))}` : 
+            '--';
+        dateInfo.innerHTML = `📅 前日: ${prevDateStr} | 即時: ${todayStr}`;
+    }
+
+    document.getElementById('syncBtn').addEventListener('click', syncComparison);
+    window.addEventListener('DOMContentLoaded', syncComparison);
+    
+    // 每 30 秒自動刷新即時資料
+    setInterval(() => {
+        fetchRealTimeTop10().then(realtime => {
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}/${today.getMonth()+1}/${today.getDate()}`;
+            renderTable('latestTbody', realtime, 'latestDate', todayStr);
+        });
+    }, 30000);
+</script>
+</body>
+</html>
