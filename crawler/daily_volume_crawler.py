@@ -1,12 +1,13 @@
 """
-台股成交量前十大公司爬蟲 - 使用 STOCK_DAY_ALL API (穩定版本)
-修正：明確指定查詢日期，確保取得正確日期的資料
+台股成交量前十大公司爬蟲 - 使用 STOCK_DAY API (支援指定日期)
+這個版本可以準確取得指定日期的成交量資料
 """
 
 import requests
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 import logging
@@ -16,9 +17,9 @@ DATA_DIR = "data"
 HISTORY_DIR = os.path.join(DATA_DIR, "history")
 LATEST_FILE = os.path.join(DATA_DIR, "latest.json")
 
-# 證交所 API：每日收盤行情 (支援指定日期)
-# 格式：https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL?date=YYYYMMDD
-STOCK_DAY_ALL_API = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+# 證交所 API
+STOCK_LIST_API = "https://openapi.twse.com.tw/v1/stock/list"  # 股票清單
+STOCK_DAY_API = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"  # 個股日成交資訊
 
 # 設定 log
 logging.basicConfig(
@@ -28,131 +29,132 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_stocks_volume_by_date(date_str: str) -> Tuple[List[Dict], Optional[str]]:
+def get_all_stock_codes() -> List[Dict[str, str]]:
+    """取得全市場股票清單（上市）"""
+    try:
+        response = requests.get(STOCK_LIST_API, timeout=30)
+        if response.status_code == 200:
+            stocks = response.json()
+            stock_list = []
+            for s in stocks:
+                code = s.get("code", "")
+                name = s.get("name", "")
+                # 只保留純數字代碼（上市股票）
+                if code.isdigit() and 4 <= len(code) <= 6:
+                    stock_list.append({
+                        "code": code,
+                        "name": name
+                    })
+            logger.info(f"取得 {len(stock_list)} 檔上市股票")
+            return stock_list
+        else:
+            logger.error(f"取得股票清單失敗: HTTP {response.status_code}")
+            return []
+    except Exception as e:
+        logger.error(f"取得股票清單錯誤: {e}")
+        return []
+
+
+def get_stock_volume_on_date(stock_code: str, date_str: str) -> Optional[int]:
     """
-    從 STOCK_DAY_ALL API 取得指定日期的全市場成交量
-    參數: date_str - 格式 YYYYMMDD (例如 20260505)
-    回傳: (成交量排序後的前10大列表, 實際資料日期)
+    取得特定股票在特定日期的成交量
+    date_str: YYYYMMDD (例: 20260505)
     """
     try:
-        # 加入日期參數
-        url = f"{STOCK_DAY_ALL_API}?date={date_str}"
-        logger.info(f"正在呼叫 API: {url}")
+        # 轉換日期格式為民國年 (113/05/05)
+        year = int(date_str[:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+        roc_year = year - 1911
+        date_roc = f"{roc_year}/{month:02d}/{day:02d}"
         
-        response = requests.get(url, timeout=30)
+        params = {
+            "response": "json",
+            "date": date_roc,
+            "stockNo": stock_code
+        }
         
-        # 檢查 HTTP 狀態碼
+        response = requests.get(STOCK_DAY_API, params=params, timeout=10)
+        
         if response.status_code != 200:
-            logger.error(f"API 回應錯誤: HTTP {response.status_code}")
-            return [], None
+            return None
         
-        # 檢查內容是否為空
-        if not response.text or response.text.strip() == "":
-            logger.warning(f"API 回傳空內容 (日期 {date_str})")
-            return [], None
+        data = response.json()
         
-        # 解析 JSON
-        try:
-            data = response.json()
-        except Exception as e:
-            logger.error(f"JSON 解析失敗: {e}")
-            logger.error(f"回傳內容前200字: {response.text[:200]}")
-            return [], None
+        if data.get("stat") != "OK":
+            return None
         
-        # 檢查資料格式
-        if not isinstance(data, list):
-            logger.error(f"API 回傳格式錯誤，型別為: {type(data)}")
-            return [], None
+        if not data.get("data"):
+            return None
         
-        if len(data) == 0:
-            logger.warning(f"API 回傳空陣列 (日期 {date_str})，可能無交易資料或日期無效")
-            return [], None
+        # 找到該日期的資料
+        for row in data["data"]:
+            # row[0] 格式為 "113/05/05"
+            if row[0] == date_roc:
+                volume_str = row[1].replace(",", "")
+                return int(volume_str)
         
-        logger.info(f"成功取得 {len(data)} 檔股票資料 (日期 {date_str})")
+        return None
         
-        # 解析每檔股票的成交量
-        volume_list = []
-        for item in data:
-            code = item.get("Code", "")
-            name = item.get("Name", "")
-            
-            if not code or not code.strip():
-                continue
-            
-            code_clean = code.strip()
-            if len(code_clean) < 4 or len(code_clean) > 6:
-                continue
-            
-            if not name or name.strip() == "":
-                continue
-            
-            volume_str = item.get("TradeVolume", "0")
-            if isinstance(volume_str, str):
-                volume_str = volume_str.replace(",", "").strip()
-            
-            try:
-                volume = int(volume_str) if volume_str else 0
-            except ValueError:
-                volume = 0
-            
-            if volume > 0:
-                volume_list.append({
-                    "code": code_clean,
-                    "name": name.strip(),
-                    "volume": volume
-                })
+    except Exception as e:
+        logger.debug(f"股票 {stock_code} 查詢失敗: {e}")
+        return None
+
+
+def get_top10_by_date(target_date: str, max_stocks: int = 500) -> Tuple[List[Dict], str]:
+    """
+    取得指定日期的成交量前十大公司
+    target_date: YYYYMMDD 格式
+    """
+    logger.info(f"開始抓取 {target_date} 成交量排行...")
+    
+    # 1. 取得所有股票清單
+    stocks = get_all_stock_codes()
+    if not stocks:
+        logger.error("無法取得股票清單")
+        return [], target_date
+    
+    # 2. 逐一抓取成交量（限制筆數避免超時）
+    volume_data = []
+    total = min(len(stocks), max_stocks)
+    
+    for idx, stock in enumerate(stocks[:max_stocks]):
+        code = stock["code"]
+        name = stock["name"]
         
-        logger.info(f"過濾後有效資料: {len(volume_list)} 筆 (成交量 > 0)")
+        volume = get_stock_volume_on_date(code, target_date)
         
-        if len(volume_list) == 0:
-            logger.warning("無任何成交量 > 0 的資料")
-            return [], None
-        
-        # 依成交量降冪排序
-        volume_list.sort(key=lambda x: x["volume"], reverse=True)
-        
-        # 取前 10 名
-        top10 = []
-        for idx, item in enumerate(volume_list[:10]):
-            top10.append({
-                "rank": idx + 1,
-                "code": item["code"],
-                "name": item["name"],
-                "volume": item["volume"]
+        if volume is not None and volume > 0:
+            volume_data.append({
+                "code": code,
+                "name": name,
+                "volume": volume
             })
         
-        # 顯示前10名
-        logger.info("=" * 40)
-        logger.info(f"📊 {date_str} 成交量前十大公司:")
-        for item in top10:
-            vol_display = f"{item['volume']:,}"
-            logger.info(f"  {item['rank']}. {item['code']} {item['name']} - {vol_display} 股")
-        logger.info("=" * 40)
+        # 進度顯示
+        if (idx + 1) % 100 == 0:
+            logger.info(f"進度: {idx+1}/{total}, 已取得 {len(volume_data)} 筆有效資料")
         
-        return top10, date_str
-        
-    except requests.exceptions.Timeout:
-        logger.error("API 請求超時")
-        return [], None
-    except requests.exceptions.ConnectionError:
-        logger.error("網路連線錯誤")
-        return [], None
-    except Exception as e:
-        logger.error(f"取得資料失敗: {e}")
-        return [], None
-
-
-def get_last_trading_day(target_date: Optional[datetime] = None) -> str:
-    """取得最近一個交易日 (排除週六、週日)"""
-    if target_date is None:
-        target_date = datetime.now()
+        # 避免請求過於密集
+        time.sleep(0.05)
     
-    offset = 0
-    while True:
-        check_date = target_date - timedelta(days=offset)
-        if check_date.weekday() < 5:  # 0=週一, 6=週日
-            return check_date.strftime("%Y%m%d")
-        offset += 1
+    logger.info(f"掃描完成，共取得 {len(volume_data)} 筆有成交量的股票")
+    
+    # 3. 依成交量排序，取前十名
+    volume_data.sort(key=lambda x: x["volume"], reverse=True)
+    top10 = volume_data[:10]
+    
+    for i, item in enumerate(top10):
+        item["rank"] = i + 1
+    
+    logger.info("=" * 40)
+    logger.info(f"📊 {target_date} 成交量前十大公司:")
+    for item in top10:
+        vol_display = f"{item['volume']:,}"
+        logger.info(f"  {item['rank']}. {item['code']} {item['name']} - {vol_display} 股")
+    logger.info("=" * 40)
+    
+    return top10, target_date
 
 
 def save_top10_to_file(top10_data: List[Dict], date_str: str):
@@ -167,67 +169,50 @@ def save_top10_to_file(top10_data: List[Dict], date_str: str):
         "total_stocks": len(top10_data)
     }
     
-    # 儲存最新檔案
     with open(LATEST_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    # 儲存歷史備份
     history_file = os.path.join(HISTORY_DIR, f"{date_str}.json")
     with open(history_file, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
     logger.info(f"✅ 資料已儲存: {LATEST_FILE}")
-    logger.info(f"✅ 歷史備份: {history_file}")
     return True
 
 
-def daily_job():
-    """每日執行任務 - 抓取最近一個交易日的資料"""
-    logger.info("=" * 50)
-    logger.info("開始執行台股成交量爬蟲 (STOCK_DAY_ALL API)")
-    
-    # 取得今天日期
+def get_last_trading_day() -> str:
+    """取得最近一個交易日 (排除週六、週日)"""
     today = datetime.now()
-    today_str = today.strftime("%Y%m%d")
-    logger.info(f"今天日期: {today_str}")
+    offset = 0
+    while True:
+        target_date = today - timedelta(days=offset)
+        if target_date.weekday() < 5:
+            return target_date.strftime("%Y%m%d")
+        offset += 1
+
+
+def daily_job():
+    """每日執行任務"""
+    logger.info("=" * 50)
+    logger.info("開始執行台股成交量爬蟲 (STOCK_DAY API)")
     
-    # 取得最近一個交易日（排除週末）
-    target_date = get_last_trading_day(today)
-    logger.info(f"目標日期 (最近交易日): {target_date}")
+    target_date = get_last_trading_day()
+    logger.info(f"目標日期: {target_date}")
     
-    # 檢查今天是否已經抓過
     history_file = os.path.join(HISTORY_DIR, f"{target_date}.json")
     if os.path.exists(history_file):
         logger.info(f"⚠️ {target_date} 資料已存在，跳過")
-        # 即使跳過，也確認一下 latest.json 是否存在
-        if not os.path.exists(LATEST_FILE):
-            logger.info("但 latest.json 不存在，重新讀取並建立")
-        else:
-            return True
+        return True
     
     try:
-        # 嘗試取得目標日期的資料
-        top10, actual_date = get_stocks_volume_by_date(target_date)
+        top10, actual_date = get_top10_by_date(target_date)
         
-        if top10 and len(top10) == 10:
+        if top10 and len(top10) >= 5:
             save_top10_to_file(top10, actual_date)
             logger.info(f"✅ {actual_date} 資料處理完成")
             return True
         else:
-            # 如果失敗，嘗試往前推一天
-            logger.warning(f"⚠️ 無法取得 {target_date} 資料，嘗試前一個交易日...")
-            
-            prev_date = get_last_trading_day(today - timedelta(days=1))
-            if prev_date != target_date:
-                logger.info(f"嘗試日期: {prev_date}")
-                top10, actual_date = get_stocks_volume_by_date(prev_date)
-                
-                if top10 and len(top10) == 10:
-                    save_top10_to_file(top10, actual_date)
-                    logger.info(f"✅ 使用備用日期 {actual_date} 資料完成")
-                    return True
-            
-            logger.warning(f"⚠️ 無法取得資料，僅 {len(top10) if top10 else 0} 筆")
+            logger.warning(f"⚠️ 取得資料不足，僅 {len(top10) if top10 else 0} 筆")
             return True
             
     except Exception as e:
