@@ -1,6 +1,7 @@
 """
 台股成交量前十大公司爬蟲 - 使用 STOCK_DAY_ALL API (穩定版本)
 這個 API 回傳全市場當日成交資料，直接解析取得成交量前十名
+支援：ETF、受益憑證、特別股等所有交易標的
 """
 
 import requests
@@ -74,10 +75,17 @@ def get_all_stocks_volume() -> Tuple[List[Dict], str]:
             code = item.get("Code", "")
             name = item.get("Name", "")
             
-            # 過濾: 只保留一般股票 (代碼為4-6位數字，排除ETF、權證等)
-            if not code or not code.isdigit():
+            # 過濾條件：放寬規則，包含所有股票、ETF、受益憑證
+            if not code or not code.strip():
                 continue
-            if len(code) < 4 or len(code) > 6:
+            
+            # 代碼長度為 4-6 位字元（允許字母，如 00981A）
+            code_clean = code.strip()
+            if len(code_clean) < 4 or len(code_clean) > 6:
+                continue
+            
+            # 排除空白名稱
+            if not name or name.strip() == "":
                 continue
             
             # 取得成交量 (TradeVolume 欄位)
@@ -90,11 +98,11 @@ def get_all_stocks_volume() -> Tuple[List[Dict], str]:
             except ValueError:
                 volume = 0
             
-            # 只保留成交量 > 0 的股票
+            # 只保留成交量 > 0 的標的
             if volume > 0:
                 volume_list.append({
-                    "code": code,
-                    "name": name,
+                    "code": code_clean,
+                    "name": name.strip(),
                     "volume": volume
                 })
         
@@ -113,14 +121,15 @@ def get_all_stocks_volume() -> Tuple[List[Dict], str]:
                 "volume": item["volume"]
             })
         
-        # 取得資料日期 (API 回傳的日期)
+        # 取得資料日期
         date_str = datetime.now().strftime("%Y%m%d")
         
         # 顯示前10名
         logger.info("=" * 40)
         logger.info("📊 成交量前十大公司:")
         for item in top10:
-            logger.info(f"  {item['rank']}. {item['code']} {item['name']} - {item['volume']:,} 股")
+            vol_display = f"{item['volume']:,}"
+            logger.info(f"  {item['rank']}. {item['code']} {item['name']} - {vol_display} 股")
         logger.info("=" * 40)
         
         return top10, date_str
