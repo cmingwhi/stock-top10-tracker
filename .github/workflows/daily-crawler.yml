@@ -3,7 +3,8 @@ name: 📊 每日台股成交量爬蟲
 on:
   # 定時觸發：每天台灣時間下午 6 點 (UTC 10:00)
   schedule:
-    - cron: '0 10 * * *'
+     # 修改為 UTC 12:30 (台灣時間 20:30)
+    - cron: '30 12 * * *'
   
   # 手動觸發：可以從 GitHub Actions 頁面手動執行
   workflow_dispatch:
