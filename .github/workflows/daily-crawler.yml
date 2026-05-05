@@ -32,6 +32,11 @@ jobs:
     name: 爬取成交量排行並部署
     runs-on: ubuntu-latest
     
+    # ⭐ 關鍵修正：加入 environment 設定
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
     steps:
       # 1. 檢出程式碼
       - name: 📥 Checkout repository
@@ -77,7 +82,7 @@ jobs:
           # 複製歷史資料（如果有的話）
           if [ -d crawler/data/history ]; then
             cp -r crawler/data/history/* frontend/data/history/ 2>/dev/null || true
-            echo "✅ 已複製歷史資料，共 $(ls crawler/data/history/ | wc -l) 筆"
+            echo "✅ 已複製歷史資料，共 $(ls crawler/data/history/ 2>/dev/null | wc -l) 筆"
           fi
           
           # 確認入口檔案存在
@@ -100,4 +105,5 @@ jobs:
           
       # 7. 部署到 GitHub Pages（GitHub 官方方式）
       - name: 🚀 Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
